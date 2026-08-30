@@ -7,6 +7,34 @@ const stageName = (stage) => ({queued:'Ожидание запуска',ssh_conn
 let data = { routers: [], backups: [], backup_runs: [] };
 let editingRouterId = null;
 const pendingBackups = new Set();
+let errorRetry = null;
+
+function ensureErrorDialog() {
+  let dialog = $('#errorDialog');
+  if (dialog) return dialog;
+  dialog = document.createElement('dialog');
+  dialog.id = 'errorDialog';
+  dialog.className = 'error-dialog';
+  dialog.innerHTML = `<div class="error-dialog-shell"><div class="error-signal"><span>!</span><i></i></div><div class="error-dialog-copy"><span class="eyebrow">ACTION REQUIRED</span><h2 id="errorDialogTitle">Не удалось выполнить действие</h2><p id="errorDialogMessage"></p><details id="errorDialogDetails"><summary>Технические подробности</summary><code id="errorDialogCode"></code></details></div><div class="error-dialog-actions"><button type="button" class="primary" id="errorRetry">Повторить <span>↻</span></button><button type="button" class="ghost" id="errorReload">Обновить страницу</button><button type="button" class="danger-ghost" id="errorLogout">Выйти и войти снова</button></div><button type="button" class="icon error-close" id="errorClose" aria-label="Закрыть">×</button></div>`;
+  document.body.appendChild(dialog);
+  $('#errorClose').onclick = () => dialog.close();
+  $('#errorReload').onclick = () => location.reload();
+  $('#errorRetry').onclick = () => { const retry = errorRetry; dialog.close(); if (retry) retry(); else location.reload(); };
+  $('#errorLogout').onclick = async () => { try { await fetch('/api/logout', {method:'POST'}); } finally { location.replace('/login'); } };
+  return dialog;
+}
+
+function showErrorDialog(message, options = {}) {
+  const dialog = ensureErrorDialog();
+  $('#errorDialogTitle').textContent = options.title || 'Не удалось выполнить действие';
+  $('#errorDialogMessage').textContent = message || 'Произошла неизвестная ошибка. Попробуйте повторить действие.';
+  const details = $('#errorDialogDetails');
+  $('#errorDialogCode').textContent = options.code || '';
+  details.hidden = !options.code;
+  errorRetry = options.retry || null;
+  $('#errorRetry').firstChild.textContent = options.retryLabel || 'Повторить ';
+  if (!dialog.open) dialog.showModal();
+}
 
 function toast(message, kind = 'success') {
   const element = $('#toast'); element.textContent = message; element.dataset.kind = kind; element.classList.add('show');
@@ -14,11 +42,16 @@ function toast(message, kind = 'success') {
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, { headers: {'Content-Type':'application/json'}, ...options });
-  if (response.status === 401) { location.replace('/login'); throw new Error('Сессия завершена'); }
-  if (!response.ok) { let message = 'Ошибка запроса'; try { const body = await response.json(); message = body.detail || message; } catch {} throw new Error(message); }
+  let response;
+  try { response = await fetch(url, { headers: {'Content-Type':'application/json'}, ...options }); }
+  catch (error) { showErrorDialog('Сервер недоступен или соединение прервано.', {title:'Нет связи с RouterVault', code:error.message}); throw error; }
+  if (response.status === 401) { const error = new Error('Сессия завершена. Войдите снова, чтобы продолжить.'); showErrorDialog(error.message, {title:'Требуется повторный вход', retryLabel:'Перейти ко входу', retry:()=>location.replace('/login'), code:`HTTP 401 · ${url}`}); throw error; }
+  if (!response.ok) { let message = 'Ошибка запроса'; try { const body = await response.json(); message = body.detail || message; } catch {} const error = new Error(message); showErrorDialog(message, {code:`HTTP ${response.status} · ${url}`}); throw error; }
   return response.status === 204 ? null : response.json();
 }
+
+window.addEventListener('unhandledrejection', event => showErrorDialog(event.reason?.message || 'Необработанная ошибка интерфейса.', {code:String(event.reason || '')}));
+window.addEventListener('error', event => showErrorDialog(event.message || 'Ошибка выполнения интерфейса.', {code:`${event.filename || 'app'}:${event.lineno || 0}`}));
 
 function render() {
   const runs = data.backup_runs || [];
@@ -78,6 +111,7 @@ $('#runAll').onclick = async event => { const button = event.currentTarget; cons
 routerForm.onsubmit = async event => { event.preventDefault(); $('#formError').textContent = ''; const original = submitButton.innerHTML; submitButton.disabled = true; submitButton.innerHTML = 'Проверяем и сохраняем…'; try { const target = editingRouterId ? `/api/routers/${editingRouterId}` : '/api/routers'; const result = await api(target, {method:editingRouterId ? 'PUT' : 'POST', body:JSON.stringify(routerPayload())}); routerForm.reset(); $('#routerDialog').close(); toast(editingRouterId ? `Настройки ${result.check.identity} обновлены` : `Устройство ${result.check.identity} подключено`); editingRouterId = null; load(); } catch (error) { $('#formError').textContent = error.message; } finally { submitButton.disabled = false; submitButton.innerHTML = original; } };
 
 const extraStyles = document.createElement('link'); extraStyles.rel = 'stylesheet'; extraStyles.href = '/static/enhancements.css'; document.head.appendChild(extraStyles);
+const errorStyles = document.createElement('link'); errorStyles.rel = 'stylesheet'; errorStyles.href = '/static/error-modal.css'; document.head.appendChild(errorStyles);
 const storageStyles = document.createElement('link'); storageStyles.rel = 'stylesheet'; storageStyles.href = '/static/storage.css'; document.head.appendChild(storageStyles);
 const storageScript = document.createElement('script'); storageScript.src = '/static/storage.js'; storageScript.defer = true; document.body.appendChild(storageScript);
 const settingsStyles = document.createElement('link'); settingsStyles.rel = 'stylesheet'; settingsStyles.href = '/static/settings.css'; document.head.appendChild(settingsStyles);

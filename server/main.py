@@ -712,7 +712,7 @@ def health(): return {"status": "ok"}
 
 @app.get("/static/{file_name}")
 def static(file_name: str):
-    if file_name not in {"app.css", "app.js", "login.css", "login.js", "enhancements.css", "storage.css", "storage.js", "settings.css", "settings.js", "profile.js", "setup.css", "setup.js", "recovery.js"}: raise HTTPException(404)
+    if file_name not in {"app.css", "app.js", "login.css", "login.js", "enhancements.css", "error-modal.css", "storage.css", "storage.js", "settings.css", "settings.js", "profile.js", "setup.css", "setup.js", "recovery.js"}: raise HTTPException(404)
     return FileResponse(ROOT / "static" / file_name)
 
 

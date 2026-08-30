@@ -1,0 +1,34 @@
+services:
+  routervault:
+    build: .
+    image: routervault:latest
+    container_name: routervault
+    restart: unless-stopped
+    environment:
+      MASTER_KEY: ${MASTER_KEY:?MASTER_KEY is required}
+      DATABASE_PATH: /data/routervault.db
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+      COOKIE_SECURE: "true"
+      TZ: ${TZ:-Asia/Novosibirsk}
+      BACKUP_WORKERS: ${BACKUP_WORKERS:-4}
+    expose:
+      - "8080"
+    volumes:
+      - routervault-data:/data
+    networks:
+      - proxy
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  routervault-data:
+
+networks:
+  proxy:
+    external: true
+    name: angie_nmp_portainer-web-net

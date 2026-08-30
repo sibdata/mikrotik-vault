@@ -1,0 +1,10 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@theme inline { --font-sans: var(--font-geist-sans); }
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html { background: #07110f; }
+body { margin: 0; font-family: var(--font-geist-sans), Arial, sans-serif; }
+button { cursor: pointer; }
+::selection { background: #b8f34a; color: #07110f; }

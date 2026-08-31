@@ -141,8 +141,33 @@ def verify_admin_password(password: str):
 
 def setup_is_complete():
     try:
-        with db() as c: row = c.execute("SELECT setup_complete FROM admin_profile WHERE id=1").fetchone()
-        return bool(row and row["setup_complete"])
+        with db() as c:
+            row = c.execute(
+                "SELECT setup_complete,password_salt,password_hash FROM admin_profile WHERE id=1"
+            ).fetchone()
+            if not row:
+                return False
+            if row["setup_complete"]:
+                return True
+
+            # Installations created before the first-run wizard already have an
+            # administrator and/or operational data.  Do not send those users
+            # back to account creation merely because the new flag defaulted to 0.
+            has_existing_installation = bool(row["password_salt"] and row["password_hash"])
+            if not has_existing_installation:
+                has_existing_installation = bool(c.execute("""
+                    SELECT
+                        EXISTS(SELECT 1 FROM routers)
+                        OR EXISTS(SELECT 1 FROM storage_settings)
+                        OR EXISTS(SELECT 1 FROM smtp_settings)
+                """).fetchone()[0])
+            if has_existing_installation:
+                c.execute(
+                    "UPDATE admin_profile SET setup_complete=1,updated_at=? WHERE id=1",
+                    (now(),),
+                )
+                return True
+            return False
     except sqlite3.Error: return False
 
 

@@ -112,8 +112,8 @@ routerForm.onsubmit = async event => { event.preventDefault(); $('#formError').t
 
 const extraStyles = document.createElement('link'); extraStyles.rel = 'stylesheet'; extraStyles.href = '/static/enhancements.css'; document.head.appendChild(extraStyles);
 const errorStyles = document.createElement('link'); errorStyles.rel = 'stylesheet'; errorStyles.href = '/static/error-modal.css?v=20260831-1'; document.head.appendChild(errorStyles);
-const storageStyles = document.createElement('link'); storageStyles.rel = 'stylesheet'; storageStyles.href = '/static/storage.css'; document.head.appendChild(storageStyles);
-const storageScript = document.createElement('script'); storageScript.src = '/static/storage.js'; storageScript.defer = true; document.body.appendChild(storageScript);
+const storageStyles = document.createElement('link'); storageStyles.rel = 'stylesheet'; storageStyles.href = '/static/storage.css?v=20260902-1'; document.head.appendChild(storageStyles);
+const storageScript = document.createElement('script'); storageScript.src = '/static/storage.js?v=20260902-1'; storageScript.defer = true; document.body.appendChild(storageScript);
 const settingsStyles = document.createElement('link'); settingsStyles.rel = 'stylesheet'; settingsStyles.href = '/static/settings.css'; document.head.appendChild(settingsStyles);
 const settingsScript = document.createElement('script'); settingsScript.src = '/static/settings.js'; settingsScript.defer = true; document.body.appendChild(settingsScript);
 const profileScript = document.createElement('script'); profileScript.src = '/static/profile.js'; profileScript.defer = true; document.body.appendChild(profileScript);

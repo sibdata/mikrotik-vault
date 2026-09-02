@@ -287,7 +287,25 @@ class S3SettingsIn(BaseModel):
     access_key: str = Field(default="", max_length=512)
     secret_key: str = Field(default="", max_length=1024)
     addressing_style: str = Field(default="path", pattern="^(path|virtual)$")
-    sse: str = Field(default="AES256", pattern="^(AES256|aws:kms|none)$")
+    sse: str = Field(default="none", pattern="^(AES256|aws:kms|none)$")
+
+    @field_validator("endpoint")
+    @classmethod
+    def clean_endpoint(cls, value):
+        return value.strip().rstrip("/")
+
+    @field_validator("bucket")
+    @classmethod
+    def valid_bucket(cls, value):
+        value = value.strip().lower()
+        valid = re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", value)
+        if not valid or ".." in value or ".-" in value or "-." in value:
+            raise ValueError("Имя bucket: 3–63 символа, только строчные латинские буквы, цифры, точки и дефисы")
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
+            return value
+        raise ValueError("Имя bucket не должно выглядеть как IP-адрес")
 
 
 class SetupIn(BaseModel):
@@ -304,6 +322,11 @@ class SetupIn(BaseModel):
     retention_runs: int = Field(ge=1, le=365)
 
 
+class SetupSMTPCheckIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    smtp: SMTPSettingsIn
+
+
 def public_router(row):
     data = dict(row); data.pop("password_enc", None); data["enabled"] = bool(data["enabled"]); return data
 
@@ -312,7 +335,7 @@ def get_s3_settings():
     with db() as c: row = c.execute("SELECT * FROM storage_settings WHERE id=1").fetchone()
     if row:
         return {"endpoint": row["endpoint"] or None, "region": row["region"], "bucket": row["bucket"], "access_key": cipher().decrypt(row["access_key_enc"].encode()).decode(), "secret_key": cipher().decrypt(row["secret_key_enc"].encode()).decode(), "addressing_style": row["addressing_style"], "sse": row["sse"]}
-    return {"endpoint": os.getenv("S3_ENDPOINT") or None, "region": os.getenv("S3_REGION", "us-east-1"), "bucket": os.getenv("S3_BUCKET", ""), "access_key": os.getenv("S3_ACCESS_KEY", ""), "secret_key": os.getenv("S3_SECRET_KEY", ""), "addressing_style": os.getenv("S3_ADDRESSING_STYLE", "path"), "sse": os.getenv("S3_SSE", "AES256")}
+    return {"endpoint": os.getenv("S3_ENDPOINT") or None, "region": os.getenv("S3_REGION", "us-east-1"), "bucket": os.getenv("S3_BUCKET", ""), "access_key": os.getenv("S3_ACCESS_KEY", ""), "secret_key": os.getenv("S3_SECRET_KEY", ""), "addressing_style": os.getenv("S3_ADDRESSING_STYLE", "path"), "sse": os.getenv("S3_SSE", "none")}
 
 
 def complete_s3_settings(item: S3SettingsIn):
@@ -412,6 +435,31 @@ def create_bucket(client, settings):
         if code in {"InvalidLocationConstraint", "InvalidRequest", "NotImplemented"}: client.create_bucket(Bucket=bucket)
         else: raise
     client.head_bucket(Bucket=bucket)
+
+
+def ensure_bucket(settings):
+    client, exists = inspect_bucket(settings)
+    if exists:
+        return client, False
+    create_bucket(client, settings)
+    return client, True
+
+
+def friendly_s3_error(exc):
+    if isinstance(exc, ClientError):
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        messages = {
+            "InvalidBucketName": "Недопустимое имя bucket. Используйте 3–63 символа: строчные латинские буквы, цифры, точки и дефисы.",
+            "AccessDenied": "S3 отклонил доступ. Проверьте ключи и разрешения на просмотр и создание bucket.",
+            "InvalidAccessKeyId": "S3 не принял Access Key.",
+            "SignatureDoesNotMatch": "S3 не принял Secret Key или подпись запроса.",
+            "BucketAlreadyOwnedByYou": "Bucket уже принадлежит этой учётной записи, но его проверка не удалась.",
+            "BucketAlreadyExists": "Такое имя bucket уже занято в хранилище. Выберите другое.",
+        }
+        if code in messages:
+            return messages[code]
+    message = str(exc).strip()
+    return message or "S3 не вернул описание ошибки"
 
 
 def host_key_fingerprint(key):
@@ -633,6 +681,16 @@ def login(item: LoginIn):
 def setup_status(): return {"required":not setup_is_complete()}
 
 
+@app.post("/api/setup/smtp/check")
+def check_setup_smtp(item: SetupSMTPCheckIn):
+    if setup_is_complete(): raise HTTPException(409, "Первичная настройка уже завершена")
+    try:
+        smtp_send(item.smtp.model_dump(), item.email, "RouterVault — тест почты", "Тестовое письмо доставлено. Почта восстановления настроена правильно.")
+    except Exception as exc:
+        raise HTTPException(422, f"Не удалось отправить тестовое письмо: {str(exc)}")
+    return {"ok":True,"message":f"Тестовое письмо отправлено на {item.email}"}
+
+
 @app.post("/api/setup")
 def complete_setup(item: SetupIn):
     if setup_is_complete(): raise HTTPException(409, "Первичная настройка уже завершена")
@@ -642,9 +700,8 @@ def complete_setup(item: SetupIn):
     storage = item.storage.model_dump(); storage["endpoint"] = storage["endpoint"] or None
     smtp = item.smtp.model_dump()
     try:
-        client, exists = inspect_bucket(storage)
-        if not exists: create_bucket(client, storage)
-    except Exception as exc: raise HTTPException(422, f"Проверка S3 не пройдена: {str(exc)}")
+        ensure_bucket(storage)
+    except Exception as exc: raise HTTPException(422, f"Проверка S3 не пройдена: {friendly_s3_error(exc)}")
     try: smtp_send(smtp, item.email, "RouterVault — проверка почты", "Почта восстановления настроена. Мастер RouterVault можно завершить.")
     except Exception as exc: raise HTTPException(422, f"Проверка SMTP не пройдена: {str(exc)}")
     salt = secrets.token_bytes(24); digest = password_digest(item.password, salt)
@@ -737,7 +794,7 @@ def health(): return {"status": "ok"}
 
 @app.get("/static/{file_name}")
 def static(file_name: str):
-    if file_name not in {"app.css", "app.js", "login.css", "login.js", "enhancements.css", "error-modal.css", "storage.css", "storage.js", "settings.css", "settings.js", "profile.js", "setup.css", "setup.js", "recovery.js"}: raise HTTPException(404)
+    if file_name not in {"app.css", "app.js", "login.css", "login.js", "enhancements.css", "error-modal.css", "storage.css", "storage.js", "s3-simple.css", "settings.css", "settings.js", "profile.js", "setup.css", "setup.js", "recovery.js"}: raise HTTPException(404)
     return FileResponse(ROOT / "static" / file_name)
 
 
@@ -799,23 +856,22 @@ def storage_status(_: str = Depends(auth)):
 def check_storage(item: S3SettingsIn, _: str = Depends(auth)):
     settings = complete_s3_settings(item)
     try:
-        _, exists = inspect_bucket(settings)
-        return {"ok": True, "exists": exists, "message": f"Bucket {item.bucket} доступен" if exists else f"Подключение работает. Bucket {item.bucket} будет создан при сохранении"}
+        _, created = ensure_bucket(settings)
+        return {"ok": True, "exists": True, "created": created, "message": f"Bucket {settings['bucket']} создан и доступен" if created else f"Bucket {settings['bucket']} найден и доступен"}
     except Exception as exc:
-        raise HTTPException(422, f"Не удалось подключиться к S3: {str(exc)}")
+        raise HTTPException(422, f"Не удалось подключиться к S3: {friendly_s3_error(exc)}")
 
 
 @app.post("/api/storage")
 def save_storage(item: S3SettingsIn, _: str = Depends(auth)):
     settings = complete_s3_settings(item)
     try:
-        client, exists = inspect_bucket(settings)
-        if not exists: create_bucket(client, settings)
+        _, created = ensure_bucket(settings)
     except Exception as exc:
-        raise HTTPException(422, f"Не удалось проверить или создать bucket: {str(exc)}")
+        raise HTTPException(422, f"Не удалось проверить или создать bucket: {friendly_s3_error(exc)}")
     with db() as c:
         c.execute("INSERT INTO storage_settings(id,endpoint,region,bucket,access_key_enc,secret_key_enc,addressing_style,sse,updated_at) VALUES(1,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET endpoint=excluded.endpoint,region=excluded.region,bucket=excluded.bucket,access_key_enc=excluded.access_key_enc,secret_key_enc=excluded.secret_key_enc,addressing_style=excluded.addressing_style,sse=excluded.sse,updated_at=excluded.updated_at", (settings["endpoint"],settings["region"],settings["bucket"],cipher().encrypt(settings["access_key"].encode()).decode(),cipher().encrypt(settings["secret_key"].encode()).decode(),settings["addressing_style"],settings["sse"],now()))
-    return {"ok": True, "created": not exists, "message": f"Bucket {item.bucket} создан и подключён" if not exists else f"Bucket {item.bucket} подключён"}
+    return {"ok": True, "created": created, "message": f"Bucket {settings['bucket']} создан и подключён" if created else f"Bucket {settings['bucket']} подключён"}
 
 
 @app.post("/api/routers", status_code=201)

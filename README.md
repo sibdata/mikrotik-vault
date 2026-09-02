@@ -87,7 +87,7 @@ docker compose up -d --build
 
 ## S3
 
-Поддерживаются MinIO, AWS S3, Selectel, Yandex Object Storage и другие сервисы с S3 API. Можно настроить endpoint, регион, тип адресации, bucket и server-side encryption.
+Поддерживаются MinIO, AWS S3, Selectel, Yandex Object Storage и другие сервисы с S3 API. В веб-интерфейсе достаточно указать endpoint, имя bucket, Access Key и Secret Key. RouterVault проверяет bucket и автоматически создаёт его, если он отсутствует. Служебные параметры подключения подставляются автоматически; при необходимости их по-прежнему можно переопределить переменными окружения.
 
 Access Key и Secret Key не возвращаются обратно в браузер. Повторная проверка соединения использует сохранённые зашифрованные реквизиты.
 
